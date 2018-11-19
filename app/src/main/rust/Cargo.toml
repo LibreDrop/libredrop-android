@@ -1,0 +1,11 @@
+[package]
+name = "rust"
+version = "1.0.0"
+authors = ["Andrius Semionovas <aneworld@gmail.com>"]
+
+[dependencies]
+libredrop-net = { git = "https://github.com/libredrop/libredrop-net" }
+jni = "0.10.2"
+
+[lib]
+crate_type = ["staticlib", "dylib"]

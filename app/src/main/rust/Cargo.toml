@@ -4,7 +4,7 @@ version = "1.0.0"
 authors = ["Andrius Semionovas <aneworld@gmail.com>"]
 
 [dependencies]
-libredrop-net = { git = "https://github.com/libredrop/libredrop-net" }
+libredrop-net = { git = "https://github.com/libredrop/libredrop-net", commit = "a76cff8" }
 jni = "0.10.2"
 
 [lib]

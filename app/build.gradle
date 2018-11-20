@@ -30,7 +30,7 @@ dependencies {
 cargo {
     module = "src/main/rust"
     targets = ["arm", "x86", "arm64", "x86_64"]
-    libname = "librust"
+    libname = "rust"
 }
 
 afterEvaluate {

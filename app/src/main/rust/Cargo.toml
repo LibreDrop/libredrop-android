@@ -6,6 +6,8 @@ authors = ["Andrius Semionovas <aneworld@gmail.com>"]
 [dependencies]
 libredrop-net = { git = "https://github.com/libredrop/libredrop-net", commit = "a76cff8" }
 jni = "0.10.2"
+android_logger = "0.6.0"
+log = "0.4.6"
 
 [lib]
 crate_type = ["staticlib", "dylib"]

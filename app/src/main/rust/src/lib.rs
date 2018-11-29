@@ -7,6 +7,7 @@ extern crate log;
 use android_logger::Filter;
 use jni::JNIEnv;
 use jni::objects::JClass;
+use jni::objects::JObject;
 use libredrop_net::discover_peers;
 use log::Level;
 use std::sync::Once;
@@ -25,10 +26,21 @@ fn init() {
     });
 }
 
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "C" fn Java_io_libredrop_network_Network_init(_env: JNIEnv, _class: JClass) {
+    init();
+}
+
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub extern "C" fn Java_io_libredrop_android_MainActivity_startDiscovery(env: JNIEnv,
-                                                                        _class: JClass) {
-    init();
+pub extern "C" fn Java_io_libredrop_network_Network_startDiscovery(_env: JNIEnv, _object: JObject) {
+    trace!("Start discovery");
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "C" fn Java_io_libredrop_network_Network_stopDiscovery(_env: JNIEnv, _object: JObject) {
+    trace!("Stop discovery");
 }

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.os.Bundle
 import android.widget.Toast
 import io.libredrop.network.Network
+import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
 
@@ -17,7 +18,9 @@ class MainActivity : Activity() {
     override fun onStart() {
         super.onStart()
 
-        network.startDiscovery()
+        thread {
+            network.startDiscovery()
+        }
     }
 
     override fun onStop() {

@@ -8,6 +8,7 @@ extern crate log;
 extern crate tokio;
 #[macro_use]
 extern crate unwrap;
+extern crate safe_crypto;
 
 use android_logger::Filter;
 use futures::Stream;
@@ -21,6 +22,7 @@ use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Once;
 use tokio::runtime::current_thread::Runtime;
+use safe_crypto::gen_encrypt_keypair;
 
 static START: Once = Once::new();
 
@@ -60,12 +62,20 @@ pub extern "C" fn Java_io_libredrop_network_Network_stopDiscovery(_env: JNIEnv, 
 fn start_discovery() -> io::Result<()> {
     let mut evloop = unwrap!(Runtime::new());
 
-    info!("Looking for peers on LAN on port 6000");
+    trace!("Looking for peers on LAN on port 6000");
     let addrs = our_addrs(1234)?;
-    let find_peers = unwrap!(discover_peers(6000, addrs))
+    trace!("Our addr: {:?}", addrs);
+    let (our_pk, our_sk) = gen_encrypt_keypair();
+    let find_peers = discover_peers(6000, addrs, &our_pk, &our_sk);
+
+    if let Err(ref e) = find_peers {
+        trace!("discovery_peers() failed with {:?}", e);
+    }
+
+    let find_peers = unwrap!(find_peers)
         .map_err(|e| error!("Peer discovery failed: {:?}", e))
         .for_each(|addrs| {
-            println!("Peer is listening on: {:?}", addrs);
+            trace!("Peer is listening on: {:?}", addrs);
             Ok(())
         });
     unwrap!(evloop.block_on(find_peers));

@@ -4,9 +4,9 @@ version = "1.0.0"
 authors = ["Andrius Semionovas <aneworld@gmail.com>"]
 
 [dependencies]
-libredrop-net = { git = "https://github.com/libredrop/libredrop-net", commit = "bc6cdb5" }
+libredrop-net = { git = "https://github.com/libredrop/libredrop-net", commit = "cdeb91a" }
 jni = "0.10.2"
-android_logger = "0.6.0"
+android_logger = "0.7.0"
 log = "0.4.6"
 unwrap = "1.2.1"
 tokio = "0.1.13"

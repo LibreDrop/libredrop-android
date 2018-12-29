@@ -14,15 +14,14 @@ use android_logger::Filter;
 use futures::Stream;
 use get_if_addrs::{get_if_addrs, IfAddr};
 use jni::JNIEnv;
-use jni::objects::JClass;
-use jni::objects::JObject;
+use jni::objects::{JClass, JObject, JValue};
 use libredrop_net::{discover_peers, PeerInfo};
 use log::Level;
 use safe_crypto::gen_encrypt_keypair;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
+use std::ops::Deref;
 use std::sync::Once;
 use std::vec::Vec;
 use tokio::runtime::current_thread::Runtime;
@@ -54,10 +53,12 @@ pub extern "C" fn Java_io_libredrop_network_Network_init(_env: JNIEnv, _class: J
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub extern "C" fn Java_io_libredrop_network_Network_startDiscovery(_env: JNIEnv, _object: JObject) {
+pub extern "C" fn Java_io_libredrop_network_Network_startDiscovery(env: JNIEnv, object: JObject) {
     trace!("Start discovery");
 
-    start_discovery();
+    let java_context = JavaContext::new(env, object);
+
+    start_discovery(java_context);
 }
 
 #[no_mangle]
@@ -66,7 +67,7 @@ pub extern "C" fn Java_io_libredrop_network_Network_stopDiscovery(_env: JNIEnv, 
     trace!("Stop discovery");
 }
 
-fn start_discovery() -> io::Result<()> {
+fn start_discovery(java_context: JavaContext) -> io::Result<()> {
     let mut evloop = unwrap!(Runtime::new());
 
     trace!("Looking for peers on LAN on port 6000");
@@ -84,6 +85,7 @@ fn start_discovery() -> io::Result<()> {
         .for_each(|peers: Vec<PeerInfo>| {
             peers.iter().for_each(|peer| {
                 add_peer(peer);
+                java_context.send_peer_info_to_java(peer);
             });
             Ok(())
         });
@@ -112,4 +114,43 @@ fn add_peer(peer_info: &PeerInfo) {
 //        let &peers: Vec<PeerInfo> = p.borrow_mut().as_mut();
 //        peers.append(peer_info);
 //    });
+}
+
+struct JavaContext<'a> {
+    env: JNIEnv<'a>,
+    network_object: JObject<'a>,
+}
+
+const JAVA_CLASS_PEER_INFO: &str = "io/libredrop/network/PeerInfo";
+const JAVA_CLASS_NETWORK: &str = "io/libredrop/network/Network";
+
+impl<'a> JavaContext<'a> {
+    fn new(env: JNIEnv<'a>, network_object: JObject<'a>) -> Self {
+        Self { env, network_object }
+    }
+
+    fn create_java_peer_info(&self, peer_info: &PeerInfo) -> JObject {
+        let name = self.env.new_string(peer_info.pub_key.to_string())
+            .expect("Failed to create name string");
+
+        let ip = self.env.new_string(peer_info.addr.ip().to_string())
+            .expect("Failed to create ip string");
+
+        let args: [JValue; 2] = [JValue::Object(*name.deref()), JValue::Object(*ip.deref())];
+
+        trace!("Looking for class {}", JAVA_CLASS_PEER_INFO);
+
+        let class = self.env.find_class(JAVA_CLASS_PEER_INFO)
+            .expect(&format!("Failed to find {} class", JAVA_CLASS_PEER_INFO));
+
+        self.env.new_object(class, "(Ljava/lang/String;Ljava/lang/String;)V", &args)
+            .expect(&format!("Failed create new object"))
+    }
+
+    fn send_peer_info_to_java(&self, peer_info: &PeerInfo) {
+        let java_peer_info = self.create_java_peer_info(peer_info);
+        let args: [JValue; 1] = [JValue::Object(java_peer_info)];
+
+        self.env.call_method(self.network_object, "onNewConnectionFound", "(Lio/libredrop/network/PeerInfo;)V", &args);
+    }
 }

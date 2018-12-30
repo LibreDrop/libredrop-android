@@ -3,9 +3,15 @@ android:
   components:
     - build-tools-28.0.3
     - android-28
+    - android-23
+    - sys-img-$ABI-android-23
   licenses:
     - 'android-sdk-license-.+'
     - 'google-gdk-license-.+'
+
+env:
+  - ABI=armeabi-v7a
+  - ABI=arm64-v8a
 
 install:
   - echo y | sdkmanager "ndk-bundle"
@@ -16,4 +22,13 @@ install:
   - rustup target add aarch64-linux-android     # for arm64
   - rustup target add x86_64-linux-android      # for x86_64
 
-script: ./gradlew build
+before_script:
+  - echo no | android create avd --force -n test -t android-23 --abi $ABI
+  - emulator -avd test -no-window &
+  - android-wait-for-emulator
+  - adb shell settings put global window_animation_scale 0
+  - adb shell settings put global transition_animation_scale 0
+  - adb shell settings put global animator_duration_scale 0
+  - adb shell input keyevent 82
+
+script: ./gradlew build connectedCheck

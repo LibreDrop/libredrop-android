@@ -1,6 +1,5 @@
 package io.libredrop.android
 
-import android.content.Context
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -9,7 +8,7 @@ import androidx.recyclerview.widget.RecyclerView
 import io.libredrop.network.PeerInfo
 import kotlin.properties.Delegates
 
-class PeersAdapter() : RecyclerView.Adapter<PeersAdapter.PeersViewHolder>() {
+class PeersAdapter : RecyclerView.Adapter<PeersAdapter.PeersViewHolder>() {
 
     var peers: List<PeerInfo> by Delegates.observable(emptyList()) { _, _, new ->
         notifyDataSetChanged()
@@ -25,8 +24,8 @@ class PeersAdapter() : RecyclerView.Adapter<PeersAdapter.PeersViewHolder>() {
     override fun onBindViewHolder(holder: PeersAdapter.PeersViewHolder, position: Int) {
         val peerInfo = peers[position]
 
-        with (holder.itemView) {
-            findViewById<TextView>(android.R.id.text1).text = peerInfo.name
+        with(holder.itemView) {
+            findViewById<TextView>(android.R.id.text1).text = "#${peerInfo.id} ${peerInfo.name}"
             findViewById<TextView>(android.R.id.text2).text = peerInfo.ip
         }
     }

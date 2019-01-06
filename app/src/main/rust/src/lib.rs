@@ -109,11 +109,11 @@ fn our_addrs(with_port: u16) -> io::Result<Vec<SocketAddr>> {
 fn add_peer(peer_info: &PeerInfo) {
     trace!("Peer is listening on: {:?}", peer_info);
 
-//    PEERS.with(|p: RefCell<Vec<PeerInfo>>| {
-//        let index = p.borrow().len();
-//        let &peers: Vec<PeerInfo> = p.borrow_mut().as_mut();
-//        peers.append(peer_info);
-//    });
+    PEERS.with(|p: &RefCell<Vec<PeerInfo>>| {
+        let index = p.borrow().len();
+        let mut peers = p.borrow_mut();
+        peers.push(peer_info.clone());
+    });
 }
 
 struct JavaContext<'a> {

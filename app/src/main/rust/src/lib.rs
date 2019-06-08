@@ -22,7 +22,6 @@ use safe_crypto::gen_encrypt_keypair;
 use std::cell::RefCell;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
-use std::ops::Deref;
 use std::sync::Once;
 use std::vec::Vec;
 use tokio::runtime::current_thread::Runtime;
@@ -72,7 +71,7 @@ fn start_discovery(java_context: JavaContext) -> io::Result<()> {
     let mut evloop = unwrap!(Runtime::new());
 
     trace!("Looking for peers on LAN on port 6000");
-    let mut addrs = our_addrs(1234)?;
+    let addrs = our_addrs(1234)?;
     trace!("Our addr: {:?}", addrs);
     let (our_pk, our_sk) = gen_encrypt_keypair();
     let find_peers = discover_peers(6000, addrs, &our_pk, &our_sk);

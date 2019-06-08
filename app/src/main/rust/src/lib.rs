@@ -10,7 +10,13 @@ extern crate tokio;
 #[macro_use]
 extern crate unwrap;
 
-use android_logger::Filter;
+use std::cell::RefCell;
+use std::io;
+use std::net::{SocketAddr, SocketAddrV4};
+use std::sync::Once;
+use std::vec::Vec;
+
+use android_logger::Config;
 use futures::Stream;
 use get_if_addrs::{get_if_addrs, IfAddr};
 use jni::errors::Result as JniResult;
@@ -19,11 +25,6 @@ use jni::objects::{JClass, JObject, JValue};
 use libredrop_net::{discover_peers, PeerInfo};
 use log::Level;
 use safe_crypto::gen_encrypt_keypair;
-use std::cell::RefCell;
-use std::io;
-use std::net::{SocketAddr, SocketAddrV4};
-use std::sync::Once;
-use std::vec::Vec;
 use tokio::runtime::current_thread::Runtime;
 
 static START: Once = Once::new();
@@ -31,9 +32,7 @@ static START: Once = Once::new();
 fn init() {
     START.call_once(|| {
         android_logger::init_once(
-            Filter::default()
-                .with_min_level(Level::Trace),
-            Some("native"),
+            Config::default().with_min_level(Level::Trace)
         );
 
         trace!("Initialization complete");

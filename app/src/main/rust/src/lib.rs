@@ -11,6 +11,7 @@ extern crate tokio;
 extern crate unwrap;
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::Once;
@@ -81,7 +82,7 @@ fn start_discovery(java_context: JavaContext) -> io::Result<()> {
 
     let find_peers = unwrap!(find_peers)
         .map_err(|e| error!("Peer discovery failed: {:?}", e))
-        .for_each(|peers: Vec<PeerInfo>| {
+        .for_each(|peers: HashSet<PeerInfo>| {
             peers.iter().for_each(|peer| {
                 let index = add_peer(peer);
                 java_context.send_peer_info_to_java(peer, index);
@@ -92,7 +93,7 @@ fn start_discovery(java_context: JavaContext) -> io::Result<()> {
     Ok(())
 }
 
-fn our_addrs(with_port: u16) -> io::Result<Vec<SocketAddr>> {
+fn our_addrs(with_port: u16) -> io::Result<HashSet<SocketAddr>> {
     let interfaces = get_if_addrs()?;
     let addrs = interfaces
         .iter()

@@ -1,5 +1,6 @@
 package io.libredrop.android
 
+import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import io.libredrop.network.Network
@@ -21,6 +22,8 @@ class PeersRepository : CoroutineScope {
     private val network = actor<Action> {
         val network = Network(::onNewConnectionFound)
         network.startDiscovery()
+
+        Log.i(TAG, "Network is active")
 
         for (action in channel) {
             when (action) {
@@ -48,5 +51,9 @@ class PeersRepository : CoroutineScope {
 
     private sealed class Action {
         class SendMessage(val peerInfo: PeerInfo, val message: String) : Action()
+    }
+
+    companion object {
+        private val TAG = PeersRepository::class.java.canonicalName
     }
 }

@@ -4,15 +4,25 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import io.libredrop.network.Network
 import io.libredrop.network.PeerInfo
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.actor
 import kotlin.concurrent.thread
+import kotlin.coroutines.CoroutineContext
 import kotlin.properties.Delegates
 
-class PeersRepository {
-    private val network = Network(::onNewConnectionFound)
+class PeersRepository : CoroutineScope {
+    private val job = Job()
+    override val coroutineContext: CoroutineContext
+        get() = newSingleThreadContext("Network thread") + job
 
-    init {
-        thread {
-            network.startDiscovery()
+    private val network = actor<Action> {
+        val network = Network(::onNewConnectionFound)
+        network.startDiscovery()
+
+        for (action in channel) {
+            when (action) {
+                is Action.SendMessage -> network.sendMessage(action.peerInfo, action.message)
+            }
         }
     }
 
@@ -25,5 +35,15 @@ class PeersRepository {
 
     private fun onNewConnectionFound(peerInfo: PeerInfo) {
         allPeers += peerInfo
+    }
+
+    fun sendMessage(peerInfo: PeerInfo, message: String) {
+        launch {
+            network.send(Action.SendMessage(peerInfo, message))
+        }
+    }
+
+    private sealed class Action {
+        class SendMessage(val peerInfo: PeerInfo, val message: String): Action()
     }
 }

@@ -5,6 +5,8 @@ class Network(val listener: (peerInfo: PeerInfo) -> Unit) {
 
     external fun stopDiscovery()
 
+    external fun sendMessage(peerInfo: PeerInfo, message: String)
+
     private fun onNewConnectionFound(peerInfo: PeerInfo) {
         listener(peerInfo)
     }

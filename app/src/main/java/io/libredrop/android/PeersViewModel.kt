@@ -10,4 +10,8 @@ class PeersViewModel : ViewModel() {
 
     val peers: LiveData<List<PeerInfo>>
         get() = peersRepository.peers
+
+    fun onSendClick(peerInfo: PeerInfo) {
+        peersRepository.sendMessage(peerInfo, "Foo bar")
+    }
 }

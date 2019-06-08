@@ -12,18 +12,20 @@ class MainActivity : FragmentActivity() {
 
     private lateinit var peersModel: PeersViewModel
 
-    private val adapter = PeersAdapter()
+    private lateinit var adapter: PeersAdapter
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        peers_list.layoutManager = LinearLayoutManager(this)
-        peers_list.adapter = adapter
-
         peersModel = ViewModelProviders.of(this).get(PeersViewModel::class.java)
         peersModel.peers.observe(this, Observer<List<PeerInfo>> { peers ->
             adapter.peers = peers
         })
+
+        adapter = PeersAdapter(peersModel::onSendClick)
+
+        peers_list.layoutManager = LinearLayoutManager(this)
+        peers_list.adapter = adapter
     }
 }

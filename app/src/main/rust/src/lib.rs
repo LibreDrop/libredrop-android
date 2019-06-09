@@ -5,7 +5,6 @@ extern crate jni;
 extern crate libredrop_net;
 #[macro_use]
 extern crate log;
-extern crate safe_crypto;
 extern crate tokio;
 #[macro_use]
 extern crate unwrap;
@@ -14,17 +13,17 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::io;
 use std::net::{SocketAddr, SocketAddrV4};
+use std::option::Option;
 use std::sync::Once;
 use std::vec::Vec;
 
 use android_logger::Config;
-use futures::Stream;
+use futures::{future, Future, Sink, Stream};
 use get_if_addrs::{get_if_addrs, IfAddr};
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject};
-use libredrop_net::{discover_peers, PeerInfo};
+use libredrop_net::{Connection, Message, Peer, PeerEvent, PeerInfo};
 use log::Level;
-use safe_crypto::gen_encrypt_keypair;
 use tokio::runtime::current_thread::Runtime;
 
 use java_context::JavaContext;
@@ -44,7 +43,7 @@ fn init() {
 }
 
 thread_local! {
-    pub static APP: App = App::new();
+    pub static APP: RefCell<Option<App<'static>>> = RefCell::new(Option::None);
 }
 
 #[no_mangle]
@@ -56,12 +55,14 @@ pub extern "C" fn Java_io_libredrop_network_Network_init(_env: JNIEnv, _class: J
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub extern "C" fn Java_io_libredrop_network_Network_startDiscovery(env: JNIEnv, object: JObject) {
+pub extern "C" fn Java_io_libredrop_network_Network_startDiscovery(env: JNIEnv<'static>, object: JObject<'static>) {
     trace!("Start discovery");
 
-    APP.with(|app| {
+    APP.with(|cell| {
         let java_context = JavaContext::new(env, object);
-        app.start_discovery(java_context);
+        let mut app = App::new(java_context);
+        app.start_discovery();
+        cell.borrow_mut().replace(app);
     });
 }
 
@@ -71,41 +72,46 @@ pub extern "C" fn Java_io_libredrop_network_Network_stopDiscovery(_env: JNIEnv, 
     trace!("Stop discovery");
 }
 
-struct App {
+pub struct App<'a> {
     evloop: Runtime,
     peers: RefCell<Vec<PeerInfo>>,
+    java_context: JavaContext<'a>,
 }
 
-impl App {
-    fn new() -> Self {
+impl<'a> App<'a> {
+    fn new(java_context: JavaContext<'a>) -> Self {
         let evloop = unwrap!(Runtime::new());
         let peers = RefCell::new(Vec::new());
 
-        Self { evloop, peers }
+        Self { evloop, peers, java_context }
     }
 
-    fn start_discovery(self, java_context: JavaContext) -> io::Result<()> {
+    fn start_discovery(&mut self) -> io::Result<()> {
         trace!("Looking for peers on LAN on port 6000");
         let addrs = App::our_addrs(1234)?;
         trace!("Our addr: {:?}", addrs);
-        let (our_pk, our_sk) = gen_encrypt_keypair();
-        let find_peers = discover_peers(6000, addrs, &our_pk, &our_sk);
+        let (mut peer, peer_events_rx) = Peer::new(6000);
 
-        if let Err(ref e) = find_peers {
-            trace!("discovery_peers() failed with {:?}", e);
-        }
-
-        let find_peers = unwrap!(find_peers)
-            .map_err(|e| error!("Peer discovery failed: {:?}", e))
-            .for_each(|peers: HashSet<PeerInfo>| {
-                peers.iter().for_each(|peer| {
-                    let index = self.add_peer(peer);
-                    java_context.send_peer_info_to_java(peer, index);
-                });
+        let handle_peer_events = peer_events_rx
+            .for_each(|event: PeerEvent| {
+                match event {
+                    PeerEvent::DiscoveredPeers(peers) => {
+                        peers.iter().for_each(|peer| {
+                            trace!("New peer: {:?}", peer);
+//                            let index = self.add_peer(peer);
+//                            self.java_context.send_peer_info_to_java(peer, index);
+                        });
+                    }
+                    PeerEvent::NewConnection(conn) => {
+                        trace!("New connection: {:?}", conn);
+                    }
+                }
                 Ok(())
-            });
+            })
+            .map_err(|_| { () });
 
-        self.evloop.spawn(find_peers);
+        self.evloop.spawn(handle_peer_events);
+        unwrap!(peer.start(&mut self.evloop));
 
         Ok(())
     }

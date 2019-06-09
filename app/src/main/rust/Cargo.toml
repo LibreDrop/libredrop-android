@@ -12,6 +12,8 @@ unwrap = "1.2.1"
 tokio = "0.1.13"
 get_if_addrs = "0.5.3"
 futures = "0.1.27"
+future-utils = "0.12.1"
+void = "1.0.2"
 
 [lib]
 crate_type = ["staticlib", "dylib"]

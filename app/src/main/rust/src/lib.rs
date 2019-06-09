@@ -1,4 +1,5 @@
 extern crate android_logger;
+extern crate future_utils;
 extern crate futures;
 extern crate get_if_addrs;
 extern crate jni;
@@ -8,6 +9,7 @@ extern crate log;
 extern crate tokio;
 #[macro_use]
 extern crate unwrap;
+extern crate void;
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -18,13 +20,15 @@ use std::sync::Once;
 use std::vec::Vec;
 
 use android_logger::Config;
-use futures::{future, Future, Sink, Stream};
+use future_utils::{BoxFuture, FutureExt, mpsc};
+use futures::{future, Future, Stream};
 use get_if_addrs::{get_if_addrs, IfAddr};
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject};
-use libredrop_net::{Connection, Message, Peer, PeerEvent, PeerInfo};
+use libredrop_net::{Peer, PeerEvent, PeerInfo};
 use log::Level;
 use tokio::runtime::current_thread::Runtime;
+use void::Void;
 
 use java_context::JavaContext;
 
@@ -86,26 +90,34 @@ impl<'a> App<'a> {
         Self { evloop, peers, java_context }
     }
 
+    fn handle_event(&self, event: PeerEvent) -> BoxFuture<(), Void> {
+        match event {
+            PeerEvent::DiscoveredPeers(peers) => {
+                peers.iter().for_each(|peer| {
+                    trace!("New peer: {:?}", peer);
+                    let index = self.add_peer(peer);
+                    self.java_context.send_peer_info_to_java(peer, index);
+                });
+            }
+            PeerEvent::NewConnection(conn) => {
+                trace!("New connection: {:?}", conn);
+            }
+        }
+        future::ok(()).into_boxed()
+    }
+
     fn start_discovery(&mut self) -> io::Result<()> {
+        let (events_tx, events_rx) = mpsc::unbounded();
+        events_rx.for_each(|event| { self.handle_event(event) });
+
         trace!("Looking for peers on LAN on port 6000");
         let addrs = App::our_addrs(1234)?;
         trace!("Our addr: {:?}", addrs);
         let (mut peer, peer_events_rx) = Peer::new(6000);
 
         let handle_peer_events = peer_events_rx
-            .for_each(|event: PeerEvent| {
-                match event {
-                    PeerEvent::DiscoveredPeers(peers) => {
-                        peers.iter().for_each(|peer| {
-                            trace!("New peer: {:?}", peer);
-//                            let index = self.add_peer(peer);
-//                            self.java_context.send_peer_info_to_java(peer, index);
-                        });
-                    }
-                    PeerEvent::NewConnection(conn) => {
-                        trace!("New connection: {:?}", conn);
-                    }
-                }
+            .for_each(move |event: PeerEvent| {
+                events_tx.unbounded_send(event);
                 Ok(())
             })
             .map_err(|_| { () });
@@ -129,7 +141,7 @@ impl<'a> App<'a> {
         Ok(addrs)
     }
 
-    fn add_peer(self, peer_info: &PeerInfo) -> usize {
+    fn add_peer(&self, peer_info: &PeerInfo) -> usize {
         trace!("Peer is listening on: {:?}", peer_info);
 
         let mut peers = self.peers.borrow_mut();

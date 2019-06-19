@@ -86,6 +86,11 @@ pub extern "C" fn Java_io_libredrop_network_Network_startDiscovery(env: JNIEnv<'
     let (_quit_tx, quit_rx) = mpsc::unbounded::<()>();
     let future = quit_rx.into_future().map(|_| ((), ())).map_err(|(e, _)| e);
 
+//    MAIN_CHANNEL.with(|(_, rx)| {
+//        let future = rx.for_each(|command| app.handle_command(&command)).map_err(|_| ());
+//        evloop.spawn(future);
+//    });
+
     evloop.spawn(handle_events);
     evloop.block_on(future);
 
@@ -151,6 +156,15 @@ impl<'a> App<'a> {
             }
             PeerEvent::NewConnection(conn) => {
                 trace!("New connection: {:?}", conn);
+            }
+        }
+        future::ok(()).into_boxed()
+    }
+
+    fn handle_command(&self, command: &Command) -> BoxFuture<(), Void> {
+        match command {
+            SendMessage(index, message) => {
+                trace!("Try send message to network for peer #{}", index);
             }
         }
         future::ok(()).into_boxed()

@@ -11,6 +11,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.actor
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
+import kotlin.concurrent.thread
 import kotlin.coroutines.CoroutineContext
 import kotlin.properties.Delegates
 
@@ -21,7 +22,9 @@ class PeersRepository : CoroutineScope {
 
     private val network = actor<Action> {
         val network = Network(::onNewConnectionFound)
-        network.startDiscovery()
+        thread {
+            network.startDiscovery()
+        }
 
         Log.i(TAG, "Network is active")
 

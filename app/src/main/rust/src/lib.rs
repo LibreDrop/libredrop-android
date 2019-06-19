@@ -1,7 +1,6 @@
 extern crate android_logger;
 extern crate future_utils;
 extern crate futures;
-extern crate get_if_addrs;
 extern crate jni;
 extern crate libredrop_net;
 #[macro_use]
@@ -12,27 +11,29 @@ extern crate unwrap;
 extern crate void;
 
 use std::cell::RefCell;
-use std::collections::HashSet;
-use std::io;
-use std::net::{SocketAddr, SocketAddrV4};
-use std::option::Option;
 use std::sync::Once;
 use std::vec::Vec;
 
 use android_logger::Config;
 use future_utils::{BoxFuture, FutureExt, mpsc};
+use future_utils::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::{future, Future, Stream};
-use get_if_addrs::{get_if_addrs, IfAddr};
 use jni::JNIEnv;
-use jni::objects::{JClass, JObject};
+use jni::objects::{JClass, JObject, JString, JValue};
 use libredrop_net::{Peer, PeerEvent, PeerInfo};
 use log::Level;
 use tokio::runtime::current_thread::Runtime;
 use void::Void;
 
+use ::Command::SendMessage;
 use java_context::JavaContext;
 
 mod java_context;
+
+#[derive(Debug)]
+pub enum Command {
+    SendMessage(u32, String)
+}
 
 static START: Once = Once::new();
 
@@ -47,7 +48,8 @@ fn init() {
 }
 
 thread_local! {
-    pub static APP: RefCell<Option<App<'static>>> = RefCell::new(Option::None);
+    pub static MAIN_CHANNEL: (UnboundedSender<Command>, UnboundedReceiver<Command>) = mpsc::unbounded();
+    pub static QUIT: (UnboundedSender<()>, UnboundedReceiver<()>) = mpsc::unbounded();
 }
 
 #[no_mangle]
@@ -56,18 +58,43 @@ pub extern "C" fn Java_io_libredrop_network_Network_init(_env: JNIEnv, _class: J
     init();
 }
 
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "C" fn Java_io_libredrop_network_Network_sendMessage(env: JNIEnv, _object: JObject, peer_info: JObject, java_message: JString) {
+    let index = extract_index(&env, peer_info);
+    let message: String = env.get_string(java_message).unwrap().into();
+    trace!("Send message to #{}: {}", index, message);
+
+    MAIN_CHANNEL.with(|(tx, _)| {
+        tx.unbounded_send(SendMessage(index, message))
+    });
+}
 
 #[no_mangle]
 #[allow(non_snake_case)]
 pub extern "C" fn Java_io_libredrop_network_Network_startDiscovery(env: JNIEnv<'static>, object: JObject<'static>) {
     trace!("Start discovery");
 
-    APP.with(|cell| {
-        let java_context = JavaContext::new(env, object);
-        let mut app = App::new(java_context);
-        app.start_discovery();
-        cell.borrow_mut().replace(app);
-    });
+    let java_context = JavaContext::new(env, object);
+    let mut evloop = unwrap!(Runtime::new());
+    let (app_tx, app_rx) = mpsc::unbounded();
+
+    let app = App::new(&mut evloop, java_context, app_tx);
+
+    let handle_events = app_rx.for_each(move |event| app.handle_event(event)).map_err(|_| ());
+
+    let (_quit_tx, quit_rx) = mpsc::unbounded::<()>();
+    let future = quit_rx.into_future().map(|_| ((), ())).map_err(|(e, _)| e);
+
+    evloop.spawn(handle_events);
+    evloop.block_on(future);
+
+//    QUIT.with(|(tx, rx)| {
+//        let future = rx.into_future().map(|_| ((), ())).map_err(|(e, _)| e);
+//        evloop.block_on(future);
+//    });
+
+    trace!("startDiscovery finished");
 }
 
 #[no_mangle]
@@ -76,18 +103,41 @@ pub extern "C" fn Java_io_libredrop_network_Network_stopDiscovery(_env: JNIEnv, 
     trace!("Stop discovery");
 }
 
+fn extract_index(env: &JNIEnv, peer_info: JObject) -> u32 {
+    let value = env.call_method(peer_info, "getId", "()I", &[]).unwrap();
+    trace!("value: {:?}", value);
+    match value {
+        JValue::Int(int) => int as u32,
+        _ => panic!("method returns non Int"),
+    }
+}
+
+
 pub struct App<'a> {
-    evloop: Runtime,
     peers: RefCell<Vec<PeerInfo>>,
     java_context: JavaContext<'a>,
+    peer: Peer,
 }
 
 impl<'a> App<'a> {
-    fn new(java_context: JavaContext<'a>) -> Self {
-        let evloop = unwrap!(Runtime::new());
+    fn new(evloop: &mut Runtime, java_context: JavaContext<'a>, app_tx: mpsc::UnboundedSender<PeerEvent>) -> Self {
         let peers = RefCell::new(Vec::new());
 
-        Self { evloop, peers, java_context }
+        let (mut peer, peer_event_rx) = Peer::new(6000);
+
+        let handle_peer_events = peer_event_rx
+            .for_each(move |event| {
+                trace!("PeerEvent: {:?}", event);
+                app_tx.unbounded_send(event);
+                Ok(())
+            })
+            .map_err(|_| ());
+
+        evloop.spawn(handle_peer_events);
+
+        unwrap!(peer.start(evloop));
+
+        Self { peers, java_context, peer }
     }
 
     fn handle_event(&self, event: PeerEvent) -> BoxFuture<(), Void> {
@@ -104,41 +154,6 @@ impl<'a> App<'a> {
             }
         }
         future::ok(()).into_boxed()
-    }
-
-    fn start_discovery(&mut self) -> io::Result<()> {
-        let (events_tx, events_rx) = mpsc::unbounded();
-        events_rx.for_each(|event| { self.handle_event(event) });
-
-        trace!("Looking for peers on LAN on port 6000");
-        let addrs = App::our_addrs(1234)?;
-        trace!("Our addr: {:?}", addrs);
-        let (mut peer, peer_events_rx) = Peer::new(6000);
-
-        let handle_peer_events = peer_events_rx
-            .for_each(move |event: PeerEvent| {
-                events_tx.unbounded_send(event);
-                Ok(())
-            })
-            .map_err(|_| { () });
-
-        self.evloop.spawn(handle_peer_events);
-        unwrap!(peer.start(&mut self.evloop));
-
-        Ok(())
-    }
-
-    fn our_addrs(with_port: u16) -> io::Result<HashSet<SocketAddr>> {
-        let interfaces = get_if_addrs()?;
-        let addrs = interfaces
-            .iter()
-            .filter_map(|interface| match interface.addr {
-                IfAddr::V4(ref ifv4_addr) => Some(ifv4_addr.ip),
-                IfAddr::V6(_) => None,
-            }).filter(|ip| !ip.is_loopback())
-            .map(|ip| SocketAddr::V4(SocketAddrV4::new(ip, with_port)))
-            .collect();
-        Ok(addrs)
     }
 
     fn add_peer(&self, peer_info: &PeerInfo) -> usize {

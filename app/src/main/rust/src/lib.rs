@@ -1,4 +1,5 @@
 extern crate android_logger;
+extern crate core;
 extern crate future_utils;
 extern crate futures;
 extern crate jni;
@@ -11,6 +12,8 @@ extern crate unwrap;
 extern crate void;
 
 use std::cell::RefCell;
+use std::fs::copy;
+use std::option::Option;
 use std::sync::Once;
 use std::vec::Vec;
 
@@ -25,14 +28,15 @@ use log::Level;
 use tokio::runtime::current_thread::Runtime;
 use void::Void;
 
-use ::Command::SendMessage;
+use ::Event::{FromPeer, SendMessage};
 use java_context::JavaContext;
 
 mod java_context;
 
 #[derive(Debug)]
-pub enum Command {
-    SendMessage(u32, String)
+pub enum Event {
+    FromPeer(PeerEvent),
+    SendMessage(u32, String),
 }
 
 static START: Once = Once::new();
@@ -48,8 +52,8 @@ fn init() {
 }
 
 thread_local! {
-    pub static MAIN_CHANNEL: (UnboundedSender<Command>, UnboundedReceiver<Command>) = mpsc::unbounded();
-    pub static QUIT: (UnboundedSender<()>, UnboundedReceiver<()>) = mpsc::unbounded();
+    pub static MAIN_SENDER: RefCell<Option<UnboundedSender<Event>>> = RefCell::new(Option::None);
+    pub static QUIT: RefCell<Option<UnboundedSender<()>>> = RefCell::new(Option::None);
 }
 
 #[no_mangle]
@@ -65,8 +69,15 @@ pub extern "C" fn Java_io_libredrop_network_Network_sendMessage(env: JNIEnv, _ob
     let message: String = env.get_string(java_message).unwrap().into();
     trace!("Send message to #{}: {}", index, message);
 
-    MAIN_CHANNEL.with(|(tx, _)| {
-        tx.unbounded_send(SendMessage(index, message))
+    MAIN_SENDER.with(|a| {
+        let ref option = *a.borrow();
+        match option {
+            Some(tx) => {
+                trace!("Main sender used for message {}", message);
+                tx.unbounded_send(SendMessage(index, message));
+            }
+            None => { trace!("Main sender is not initialized!"); }
+        };
     });
 }
 
@@ -77,27 +88,30 @@ pub extern "C" fn Java_io_libredrop_network_Network_startDiscovery(env: JNIEnv<'
 
     let java_context = JavaContext::new(env, object);
     let mut evloop = unwrap!(Runtime::new());
-    let (app_tx, app_rx) = mpsc::unbounded();
+    let (app_tx, app_rx) = mpsc::unbounded::<Event>();
 
-    let app = App::new(&mut evloop, java_context, app_tx);
+    let app = App::new(&mut evloop, java_context, app_tx.clone());
 
-    let handle_events = app_rx.for_each(move |event| app.handle_event(event)).map_err(|_| ());
+    MAIN_SENDER.with(|a| {
+        let mut option = a.borrow_mut();
+        option.replace(app_tx);
+    });
 
-    let (_quit_tx, quit_rx) = mpsc::unbounded::<()>();
-    let future = quit_rx.into_future().map(|_| ((), ())).map_err(|(e, _)| e);
+    let command_future = app_rx.for_each(move |event| {
+        app.handle_event(&event)
+    }).map_err(|_| ());
 
-//    MAIN_CHANNEL.with(|(_, rx)| {
-//        let future = rx.for_each(|command| app.handle_command(&command)).map_err(|_| ());
-//        evloop.spawn(future);
-//    });
+    evloop.spawn(command_future);
 
-    evloop.spawn(handle_events);
-    evloop.block_on(future);
+    let (quit_tx, quit_rx) = mpsc::unbounded::<()>();
 
-//    QUIT.with(|(tx, rx)| {
-//        let future = rx.into_future().map(|_| ((), ())).map_err(|(e, _)| e);
-//        evloop.block_on(future);
-//    });
+    QUIT.with(|a| {
+        let mut option = a.borrow_mut();
+        option.replace(quit_tx);
+    });
+
+    let quit_future = quit_rx.into_future().map(|_| ((), ())).map_err(|(e, _)| e);
+    evloop.block_on(quit_future);
 
     trace!("startDiscovery finished");
 }
@@ -106,6 +120,14 @@ pub extern "C" fn Java_io_libredrop_network_Network_startDiscovery(env: JNIEnv<'
 #[allow(non_snake_case)]
 pub extern "C" fn Java_io_libredrop_network_Network_stopDiscovery(_env: JNIEnv, _object: JObject) {
     trace!("Stop discovery");
+
+    QUIT.with(|a| {
+        let ref option = *a.borrow();
+        match option {
+            Some(tx) => { tx.unbounded_send(()); }
+            None => { trace!("Quit sender is not initialized!"); }
+        };
+    });
 }
 
 fn extract_index(env: &JNIEnv, peer_info: JObject) -> u32 {
@@ -125,7 +147,7 @@ pub struct App<'a> {
 }
 
 impl<'a> App<'a> {
-    fn new(evloop: &mut Runtime, java_context: JavaContext<'a>, app_tx: mpsc::UnboundedSender<PeerEvent>) -> Self {
+    fn new(evloop: &mut Runtime, java_context: JavaContext<'a>, app_tx: mpsc::UnboundedSender<Event>) -> Self {
         let peers = RefCell::new(Vec::new());
 
         let (mut peer, peer_event_rx) = Peer::new(6000);
@@ -133,7 +155,7 @@ impl<'a> App<'a> {
         let handle_peer_events = peer_event_rx
             .for_each(move |event| {
                 trace!("PeerEvent: {:?}", event);
-                app_tx.unbounded_send(event);
+                app_tx.unbounded_send(FromPeer(event));
                 Ok(())
             })
             .map_err(|_| ());
@@ -145,28 +167,28 @@ impl<'a> App<'a> {
         Self { peers, java_context, peer }
     }
 
-    fn handle_event(&self, event: PeerEvent) -> BoxFuture<(), Void> {
+    fn handle_event(&self, event: &Event) -> BoxFuture<(), Void> {
         match event {
-            PeerEvent::DiscoveredPeers(peers) => {
-                peers.iter().for_each(|peer| {
-                    trace!("New peer: {:?}", peer);
-                    let index = self.add_peer(peer);
-                    self.java_context.send_peer_info_to_java(peer, index);
-                });
+            FromPeer(peerEvent) => {
+                match peerEvent {
+                    PeerEvent::DiscoveredPeers(peers) => {
+                        peers.iter().for_each(|peer| {
+                            trace!("New peer: {:?}", peer);
+                            let index = self.add_peer(peer);
+                            self.java_context.send_peer_info_to_java(peer, index);
+                        });
+                    }
+                    PeerEvent::NewConnection(conn) => {
+                        trace!("New connection: {:?}", conn);
+                    }
+                }
             }
-            PeerEvent::NewConnection(conn) => {
-                trace!("New connection: {:?}", conn);
-            }
-        }
-        future::ok(()).into_boxed()
-    }
 
-    fn handle_command(&self, command: &Command) -> BoxFuture<(), Void> {
-        match command {
             SendMessage(index, message) => {
                 trace!("Try send message to network for peer #{}", index);
             }
         }
+
         future::ok(()).into_boxed()
     }
 
@@ -178,3 +200,4 @@ impl<'a> App<'a> {
         peers.len() - 1
     }
 }
+

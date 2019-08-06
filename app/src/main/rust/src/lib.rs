@@ -51,8 +51,11 @@ fn init() {
     });
 }
 
+//TODO: replace with mutex
+static mut MAIN_SENDER: Option<UnboundedSender<Event>> = Option::None;
+
 thread_local! {
-    pub static MAIN_SENDER: RefCell<Option<UnboundedSender<Event>>> = RefCell::new(Option::None);
+    //TODO: Replace with mutex
     pub static QUIT: RefCell<Option<UnboundedSender<()>>> = RefCell::new(Option::None);
 }
 
@@ -69,16 +72,15 @@ pub extern "C" fn Java_io_libredrop_network_Network_sendMessage(env: JNIEnv, _ob
     let message: String = env.get_string(java_message).unwrap().into();
     trace!("Send message to #{}: {}", index, message);
 
-    MAIN_SENDER.with(|a| {
-        let ref option = *a.borrow();
-        match option {
-            Some(tx) => {
-                trace!("Main sender used for message {}", message);
-                tx.unbounded_send(SendMessage(index, message));
-            }
-            None => { trace!("Main sender is not initialized!"); }
-        };
-    });
+    let sender = unsafe { MAIN_SENDER.clone() };
+
+    match sender {
+        Some(tx) => {
+            trace!("Main sender used for message {}", message);
+            tx.unbounded_send(SendMessage(index, message));
+        }
+        None => { trace!("Main sender is not initialized!"); }
+    }
 }
 
 #[no_mangle]
@@ -92,10 +94,9 @@ pub extern "C" fn Java_io_libredrop_network_Network_startDiscovery(env: JNIEnv<'
 
     let app = App::new(&mut evloop, java_context, app_tx.clone());
 
-    MAIN_SENDER.with(|a| {
-        let mut option = a.borrow_mut();
-        option.replace(app_tx);
-    });
+    unsafe {
+        MAIN_SENDER = Option::Some(app_tx);
+    }
 
     let command_future = app_rx.for_each(move |event| {
         app.handle_event(&event)

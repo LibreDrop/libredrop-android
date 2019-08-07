@@ -12,6 +12,7 @@ extern crate unwrap;
 extern crate void;
 
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::fs::copy;
 use std::option::Option;
 use std::sync::Once;
@@ -21,17 +22,20 @@ use android_logger::Config;
 use future_utils::{BoxFuture, FutureExt, mpsc};
 use future_utils::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::{future, Future, Stream};
+use futures::sink::Sink;
 use jni::JNIEnv;
 use jni::objects::{JClass, JObject, JString, JValue};
-use libredrop_net::{Peer, PeerEvent, PeerInfo};
+use libredrop_net::{Connection, Message, Peer, PeerEvent, PeerInfo};
 use log::Level;
 use tokio::runtime::current_thread::Runtime;
 use void::Void;
 
 use ::Event::{FromPeer, SendMessage};
+use future_logger::LogError;
 use java_context::JavaContext;
 
 mod java_context;
+mod future_logger;
 
 #[derive(Debug)]
 pub enum Event {
@@ -155,7 +159,6 @@ impl<'a> App<'a> {
 
         let handle_peer_events = peer_event_rx
             .for_each(move |event| {
-                trace!("PeerEvent: {:?}", event);
                 app_tx.unbounded_send(FromPeer(event));
                 Ok(())
             })
@@ -187,10 +190,35 @@ impl<'a> App<'a> {
 
             SendMessage(index, message) => {
                 trace!("Try send message to network for peer #{}", index);
+                let ref peer: PeerInfo = self.peers.borrow()[*index as usize];
+
+                return self.send_message(peer, message).into_boxed();
             }
         }
 
         future::ok(()).into_boxed()
+    }
+
+    fn send_message(&self, peer_info: &PeerInfo, message: &String) -> impl Future<Item=(), Error=Void> {
+        let message = message.clone();
+        let mut peers_set = HashSet::with_capacity(1);
+        peers_set.insert(peer_info.clone());
+        let future = self.peer
+            .connect_to(peers_set)
+            .map_err(|errs| {
+                trace!("Failed connect to peer: {:?}", errs);
+                0
+            })
+            .and_then(|conn| {
+                trace!("connected with {}", conn.peer_addr());
+                conn.send(Message::Data(message.into_bytes())).map_err(|e| {
+                    trace!("Failed to send a message: {}", e);
+                    0
+                })
+            })
+            .map(|_conn| ());
+
+        LogError::new(future, Level::Info, "Connect/send failed")
     }
 
     fn add_peer(&self, peer_info: &PeerInfo) -> usize {

@@ -1,4 +1,4 @@
-package io.libredrop.android
+package io.libredrop.android.activity
 
 import android.util.Log
 import androidx.lifecycle.LiveData

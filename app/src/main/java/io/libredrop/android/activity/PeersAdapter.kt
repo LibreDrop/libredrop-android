@@ -1,9 +1,10 @@
-package io.libredrop.android
+package io.libredrop.android.activity
 
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
+import io.libredrop.android.R
 import io.libredrop.network.PeerInfo
 import kotlinx.android.synthetic.main.peer_item.view.*
 import kotlin.properties.Delegates

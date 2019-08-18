@@ -1,10 +1,11 @@
-package io.libredrop.android
+package io.libredrop.android.activity
 
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.ViewModel
 import io.libredrop.network.PeerInfo
+import javax.inject.Inject
 
-class PeersViewModel : ViewModel() {
+class PeersViewModel @Inject constructor() : ViewModel() {
 
     private val peersRepository = PeersRepository()
 

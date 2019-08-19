@@ -6,6 +6,7 @@ import dagger.Component
 import dagger.android.AndroidInjectionModule
 import dagger.android.AndroidInjector
 import io.libredrop.android.Application
+import javax.inject.Singleton
 
 @Component(
     modules = [
@@ -14,6 +15,7 @@ import io.libredrop.android.Application
         ActivityModule::class
     ]
 )
+@Singleton
 interface ApplicationComponent : AndroidInjector<Application> {
 
     @Component.Factory

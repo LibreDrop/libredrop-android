@@ -11,11 +11,14 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.actor
 import kotlinx.coroutines.launch
 import java.util.concurrent.Executors
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlin.concurrent.thread
 import kotlin.coroutines.CoroutineContext
 import kotlin.properties.Delegates
 
-class PeersRepository : CoroutineScope {
+@Singleton
+class PeersRepository @Inject constructor() : CoroutineScope {
     private val job = Job()
     override val coroutineContext: CoroutineContext
         get() = Executors.newSingleThreadExecutor().asCoroutineDispatcher() + job
